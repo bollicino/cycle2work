@@ -116,7 +116,8 @@
             var data = {
                 lat: place.geometry.location.lat(),
                 lng: place.geometry.location.lng(),
-                token: "{{uuid}}"
+                token: "{{uuid}}",
+                _csrf: "{{csrfToken}}"
             }
 
             $.ajax({

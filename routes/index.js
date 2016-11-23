@@ -4,100 +4,98 @@ var strava = require("strava-v3");
 var moment = require("moment");
 var User = require("../entity/user");
 var Token = require("../entity/token");
+var csurf = require("csurf");
+var csrfProtection = csurf();
+var TokenError = require("../error/tokenError").create;
 
 /* GET home page. */
 router.get("/", function (req, res, next) {
-    res.render("index", {title: "Express"});
+    res.render("index");
 });
 
-router.post("/confirm", function (req, res, next) {
+router.post("/confirm", csrfProtection, function (req, res, next) {
 
     // TODO migliorare validazione
     if (!req.body || !req.body.lat || !req.body.lng || !req.body.token) {
-        res.send({error: "an error occurred"});
+        res.send({error: "an exception occurred"});
         return;
     }
 
     console.log("response: ", req.body);
     var lat = req.body.lat;
     var lng = req.body.lng;
+    var retrievedToken;
 
-    Token.findOne({uuid: req.body.token}, function (err, token) {
-        console.log("***************");
-        if (err) {
-            res.send({error: "an error occurred"});
-            return;
-        }
-        if ((token == null)||(token.expire < moment.unix())) {
-            res.send({error: "token expired"});
-            return;
-        }
-        console.log("utente :", token.slackId);
-        User.findOne({slackId: token.slackId}, function (err, user) {
-            if (err || !user) {
-                console.log("Errore nel recuperare lo user");
+    Token
+        .findOne({uuid: req.body.token})
+        .then(token => {
+            if (token == null || token.expire < moment.utc().unix()) {
+                console.log("Token expired");
+                throw TokenError({message: "Invalid token", status: 401});
             }
-            console.log("longitudine: " + lng);
-            console.log("latitudine: " + lat);
+            retrievedToken = token;
+            return User.findOne({slackId: retrievedToken.slackId});
+        })
+        .then(user => {
+            if (user == null) {
+                throw new Error("User not found");
+            }
             user.location.coordinates = [lat, lng];
-
-            user.save(function (err) {
-                if (err) {
-                    console.log("Errore nel salvare l'utente: ", err);
-                }
-                console.log("user salvato: ", user);
-                token.remove();
-                res.send({error: null, message: "yeahhhhh"});
-            });
+            return user.save();
+        })
+        .then(user => {
+            console.log("Location updated for user: ", user);
+            retrievedToken.remove();
+            res.send({});
+        })
+        .catch(err => {
+            if (err.isTokenError) {
+                console.log("TokenError: ", err);
+                res.status(err.status);
+                res.render("error", {message: err.message, error: {status: err.status, stack: ""}});
+            } else {
+                console.log("GenericError: ", err);
+                res.status(500);
+                res.render("error", {message: "Whoops! Something goes wrong", error: {status: 500, stack: ""}});
+            }
         });
-        // recuperare l"utente
-        // aggiornare coordinate
-        // salvare utente
-        // cancellare token
-    });
 });
 
-router.get("/confirm", function (req, res, next) {
+router.get("/confirm", csrfProtection, function (req, res, next) {
     var code = req.query.code;
     var userUuid = req.query.state;
 
-    Token.findOne({uuid: userUuid}, function (err, token) {
-        if (err || !token) {
-            // TODO mostrare una pagina di errore
-            res.render("error", {message: "token expired", error: {status: 500, stack: ""}});
-            return;
-        }
-
-        User.findOne({slackId: token.slackId}, function (err, user) {
-            if (err || !user) {
-                // TODO
+    Token
+        .findOne({uuid: userUuid})
+        .then(token => {
+            if (!token || token.expire < moment.utc().unix()) {
+                throw TokenError({message: "Invalid token", status: 401});
             }
-
-
+            return User.findOne({slackId: token.slackId});
+        })
+        .then(user => {
             strava.oauth.getToken(code, function (err, payload) {
-
                 if (err) {
-                    res.render("confirm", {access_token: "Si è verificato un errore, riprova"});
+                    throw new Error("Error calling Strava API");
                 }
-
                 user.stravaAuthToken = payload.access_token;
-
-
-                user.save(function (err) {
-                    if (err) {
-                        res.render("confirm", {uuid: null});
-                    }
-                    console.log(token.uuid);
-                    res.render("confirm", {uuid: token.uuid});
-                });
-
+                return user.save();
             });
-
+        })
+        .then(() => {
+            res.render("confirm", {uuid: null, csrfToken: req.csrfToken()});
+        })
+        .catch(err => {
+            if (err.isTokenError) {
+                console.log("TokenError: ", err);
+                res.status(err.status);
+                res.render("error", {message: err.message, error: {status: err.status, stack: ""}});
+            } else {
+                console.log("GenericError: ", err);
+                res.status(500);
+                res.render("error", {message: "Whoops! Something goes wrong", error: {status: 500, stack: ""}});
+            }
         });
-
-    });
-
-
 });
 
 module.exports = router;

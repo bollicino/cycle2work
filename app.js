@@ -2,7 +2,6 @@ var express = require("express");
 var path = require("path");
 // var favicon = require("serve-favicon");
 var logger = require("morgan");
-var cookieParser = require("cookie-parser");
 var bodyParser = require("body-parser");
 
 var R = require("ramda");
@@ -16,6 +15,8 @@ var Report = require("./entity/report");
 var Token = require("./entity/token");
 var uuid = require("node-uuid");
 var moment = require("moment");
+var helmet = require("helmet");
+var session = require("express-session");
 
 require("./cron");
 
@@ -76,7 +77,7 @@ controller.hears("login", ["direct_message"], function (bot, message) {
             return Token({
                 slackId: slackId,
                 uuid: uuid.v4(),
-                expire: moment().unix()
+                expire: moment.utc().add(5, "minutes").unix()
             }).save();
 
         })
@@ -166,8 +167,9 @@ app.set("view engine", "hbs");
 // app.use(favicon(path.join(__dirname, "public", "favicon.ico")));
 app.use(logger("dev"));
 app.use(bodyParser.json());
+app.use(helmet());
 app.use(bodyParser.urlencoded({extended: false}));
-app.use(cookieParser());
+// app.use(cookieParser());
 app.use(require("node-sass-middleware")({
     src: path.join(__dirname, "public"),
     dest: path.join(__dirname, "public"),
@@ -175,6 +177,16 @@ app.use(require("node-sass-middleware")({
     sourceMap: true
 }));
 app.use(express.static(path.join(__dirname, "public")));
+
+app.use(session({
+    secret: process.env.SESSION_SECRET,
+    saveUninitialized: false,
+    cookie: {
+        secure: false,
+        domain: process.env.DOMAIN || "cycle2work.io",
+        httpOnly: true
+    }
+}));
 
 app.use("/", routes);
 
